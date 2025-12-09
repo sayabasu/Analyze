@@ -1,15 +1,67 @@
-from flask import Flask, request, jsonify
+import os
 
+from flask import Flask, request, jsonify
+from dotenv import load_dotenv
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.nlp_engine import SpacyNlpEngine
-from presidio_analyzer.predefined_recognizers.generic import (
-    CreditCardRecognizer,
-    EmailRecognizer,
-    PhoneRecognizer,
-    UrlRecognizer,
+from presidio_analyzer.predefined_recognizers.in_aadhaar_recognizer import (
+    InAadhaarRecognizer,
+)
+from presidio_analyzer.predefined_recognizers.in_pan_recognizer import InPanRecognizer
+from presidio_analyzer.predefined_recognizers.in_passport_recognizer import (
+    InPassportRecognizer,
+)
+from presidio_analyzer.predefined_recognizers.in_voter_recognizer import (
+    InVoterRecognizer,
 )
 
-from custom_recognizers_india import pan_recognizer, aadhaar_recognizer
+from custom_recognizers_india import gstin_recognizer
+
+load_dotenv()
+
+API_KEY = os.environ.get("ANALYZER_API_KEY")
+API_KEY_HEADER = "X-API-Key"
+
+
+from werkzeug.datastructures import Headers
+
+
+def _is_authorized(headers: Headers) -> bool:
+    if not API_KEY:
+        return True
+
+    return headers.get(API_KEY_HEADER) == API_KEY
+
+
+_ENTITY_FILTER_CANDIDATES = [
+    "EMAIL_ADDRESS",
+    "PHONE_NUMBER",
+    "URL",
+    "CREDIT_CARD",
+    "IBAN_CODE",
+    "IP_ADDRESS",
+    "IN_PAN",
+    "IN_AADHAAR",
+    "IN_PASSPORT",
+    "IN_VOTER",
+    "IN_GSTIN",
+]
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if not value:
+        return False
+
+    return value.strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _load_entity_filter() -> list[str]:
+    enabled = [
+        entity
+        for entity in _ENTITY_FILTER_CANDIDATES
+        if _is_truthy_env(os.environ.get(entity))
+    ]
+    return enabled or _ENTITY_FILTER_CANDIDATES
 
 
 # -------------------------------------------------------
@@ -23,17 +75,19 @@ nlp_models = [
 ]
 
 nlp_engine = SpacyNlpEngine(models=nlp_models)
+if not nlp_engine.is_loaded():
+    nlp_engine.load()
 
 # -------------------------------------------------------
 # 2) Register built-in + custom recognizers
 # -------------------------------------------------------
 registry = RecognizerRegistry()
-registry.add_recognizer(EmailRecognizer())
-registry.add_recognizer(PhoneRecognizer())
-registry.add_recognizer(UrlRecognizer())
-registry.add_recognizer(CreditCardRecognizer())
-registry.add_recognizer(pan_recognizer)
-registry.add_recognizer(aadhaar_recognizer)
+registry.load_predefined_recognizers(nlp_engine=nlp_engine, languages=["en"])
+registry.add_recognizer(gstin_recognizer)
+registry.add_recognizer(InPanRecognizer())
+registry.add_recognizer(InAadhaarRecognizer())
+registry.add_recognizer(InPassportRecognizer())
+registry.add_recognizer(InVoterRecognizer())
 
 # -------------------------------------------------------
 # 3) Create AnalyzerEngine
@@ -50,19 +104,15 @@ analyzer = AnalyzerEngine(
 app = Flask(__name__)
 
 # Only return the PII categories we care about instead of every spaCy entity.
-DEFAULT_ENTITY_FILTER = [
-    "EMAIL_ADDRESS",
-    "PHONE_NUMBER",
-    "URL",
-    "CREDIT_CARD",
-    "IN_PAN",
-    "IN_AADHAAR",
-]
+DEFAULT_ENTITY_FILTER = _load_entity_filter()
 
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json()
+    if not _is_authorized(request.headers):
+        return jsonify({"error": "Unauthorized"}), 401
+
     text = data.get("text", "")
     language = data.get("language", "en")
     entities = data.get("entities")  # optional: filter only some entity types
@@ -80,4 +130,5 @@ def analyze():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    port = int(os.environ.get("PORT", "3000"))
+    app.run(host="0.0.0.0", port=port)

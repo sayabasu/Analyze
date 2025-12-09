@@ -1,0 +1,7 @@
+__pycache__
+venv
+.venv
+*.pyc
+.env
+tests/output_results.csv
+tests/input_texts.csv

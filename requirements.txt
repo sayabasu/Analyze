@@ -1,0 +1,8 @@
+Flask>=2.3
+presidio-analyzer==2.2.359
+spacy>=3.5.2,<4.0
+python-dotenv>=1.0
+requests>=2.32
+
+# Install the spaCy language model separately:
+# python -m spacy download en_core_web_lg
