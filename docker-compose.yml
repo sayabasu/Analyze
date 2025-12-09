@@ -5,5 +5,5 @@ services:
     env_file:
       - .env
     ports:
-      - "9090:9090"
+      - "${PORT}:${PORT}"
     restart: unless-stopped
